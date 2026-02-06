@@ -157,7 +157,7 @@
     },
     {
       "name": "static-analysis",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "Static analysis toolkit with CodeQL, Semgrep, and SARIF parsing for security vulnerability detection",
       "author": {
         "name": "Axel Mierczuk & Paweł Płatek"
@@ -175,7 +175,7 @@
     },
     {
       "name": "testing-handbook-skills",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Skills from the Trail of Bits Application Security Testing Handbook (appsec.guide)",
       "author": {
         "name": "Paweł Płatek"

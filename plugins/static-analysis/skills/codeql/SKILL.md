@@ -1,315 +1,119 @@
 ---
 name: codeql
-description: Run CodeQL static analysis for security vulnerability detection, taint tracking, and data flow analysis. Use when asked to analyze code with CodeQL, create CodeQL databases, write custom QL queries, perform security audits, or set up CodeQL in CI/CD pipelines.
+description: >-
+  Runs CodeQL static analysis for security vulnerability detection
+  using interprocedural data flow and taint tracking. Applicable when
+  finding vulnerabilities, running a security scan, performing a security
+  audit, running CodeQL, building a CodeQL database, selecting query
+  rulesets, creating data extension models, or processing CodeQL SARIF
+  output. NOT for writing custom QL queries or CI/CD pipeline setup.
 allowed-tools:
   - Bash
   - Read
+  - Write
   - Glob
   - Grep
+  - AskUserQuestion
+  - Task
+  - TaskCreate
+  - TaskList
+  - TaskUpdate
 ---
 
-# CodeQL Static Analysis
+# CodeQL Analysis
 
-## When to Use CodeQL
+Supported languages: Python, JavaScript/TypeScript, Go, Java/Kotlin, C/C++, C#, Ruby, Swift.
 
-**Ideal scenarios:**
-- Source code access with ability to build (for compiled languages)
-- Open-source projects or GitHub Advanced Security license
-- Need for interprocedural data flow and taint tracking
-- Finding complex vulnerabilities requiring AST/CFG analysis
-- Comprehensive security audits where analysis time is not critical
+**Skill resources:** Reference files and templates are located at `{baseDir}/references/` and `{baseDir}/workflows/`. Use `{baseDir}` to resolve paths to these files at runtime.
 
-**Consider Semgrep instead when:**
-- No build capability for compiled languages
-- Licensing constraints
-- Need fast, lightweight pattern matching
-- Simple, single-file analysis is sufficient
+## Quick Start
 
-### Why Interprocedural Analysis Matters
+For the common case ("scan this codebase for vulnerabilities"):
 
-Simple grep/pattern tools only see one function at a time. Real vulnerabilities often span multiple functions:
+```bash
+# 1. Verify CodeQL is installed
+command -v codeql >/dev/null 2>&1 && codeql --version || echo "NOT INSTALLED"
 
-```
-HTTP Handler → Input Parser → Business Logic → Database Query
-     ↓              ↓              ↓              ↓
-   source      transforms       passes       sink (SQL)
+# 2. Check for existing database
+ls -dt codeql_*.db 2>/dev/null | head -1
 ```
 
-CodeQL tracks data flow across all these steps. A tainted input in the handler can be traced through 5+ function calls to find where it reaches a dangerous sink.
+Then execute the full pipeline: **build database → create data extensions → run analysis** using the workflows below.
 
-Pattern-based tools miss this because they can't connect `request.param` in file A to `db.execute(query)` in file B.
+## When to Use
+
+- Scanning a codebase for security vulnerabilities with deep data flow analysis
+- Building a CodeQL database from source code (with build capability for compiled languages)
+- Finding complex vulnerabilities that require interprocedural taint tracking or AST/CFG analysis
+- Performing comprehensive security audits with multiple query packs
 
 ## When NOT to Use
 
-Do NOT use this skill for:
-- Projects that cannot be built (CodeQL requires successful compilation for compiled languages)
-- Quick pattern searches (use Semgrep or grep for speed)
-- Non-security code quality checks (use linters instead)
-- Projects without source code access
-
-## Environment Check
-
-```bash
-# Check if CodeQL is installed
-command -v codeql >/dev/null 2>&1 && echo "CodeQL: installed" || echo "CodeQL: NOT installed (run install steps below)"
-```
-
-## Installation
-
-### CodeQL CLI
-
-```bash
-# macOS/Linux (Homebrew)
-brew install --cask codeql
-
-# Update
-brew upgrade codeql
-```
-
-Manual: Download bundle from https://github.com/github/codeql-action/releases
-
-### Trail of Bits Queries (Optional)
-
-Install public ToB security queries for additional coverage:
-
-```bash
-# Download ToB query packs
-codeql pack download trailofbits/cpp-queries trailofbits/go-queries
-
-# Verify installation
-codeql resolve qlpacks | grep trailofbits
-```
-
-## Core Workflow
-
-### 1. Create Database
-
-```bash
-codeql database create codeql.db --language=<LANG> [--command='<BUILD>'] --source-root=.
-```
-
-| Language | `--language=` | Build Required |
-|----------|---------------|----------------|
-| Python | `python` | No |
-| JavaScript/TypeScript | `javascript` | No |
-| Go | `go` | No |
-| Ruby | `ruby` | No |
-| Rust | `rust` | Yes (`--command='cargo build'`) |
-| Java/Kotlin | `java` | Yes (`--command='./gradlew build'`) |
-| C/C++ | `cpp` | Yes (`--command='make -j8'`) |
-| C# | `csharp` | Yes (`--command='dotnet build'`) |
-| Swift | `swift` | Yes (macOS only) |
-
-### 2. Run Analysis
-
-```bash
-# List available query packs
-codeql resolve qlpacks
-```
-
-**Run security queries:**
-
-```bash
-# SARIF output (recommended)
-codeql database analyze codeql.db \
-  --format=sarif-latest \
-  --output=results.sarif \
-  -- codeql/python-queries:codeql-suites/python-security-extended.qls
-
-# CSV output
-codeql database analyze codeql.db \
-  --format=csv \
-  --output=results.csv \
-  -- codeql/javascript-queries
-```
-
-**With Trail of Bits queries (if installed):**
-
-```bash
-codeql database analyze codeql.db \
-  --format=sarif-latest \
-  --output=results.sarif \
-  -- trailofbits/go-queries
-```
-
-## Writing Custom Queries
-
-### Query Structure
-
-CodeQL uses SQL-like syntax: `from Type x where P(x) select f(x)`
-
-### Basic Template
-
-```ql
-/**
- * @name Find SQL injection vulnerabilities
- * @description Identifies potential SQL injection from user input
- * @kind path-problem
- * @problem.severity error
- * @security-severity 9.0
- * @precision high
- * @id py/sql-injection
- * @tags security
- *       external/cwe/cwe-089
- */
-
-import python
-import semmle.python.dataflow.new.DataFlow
-import semmle.python.dataflow.new.TaintTracking
-
-module SqlInjectionConfig implements DataFlow::ConfigSig {
-  predicate isSource(DataFlow::Node source) {
-    // Define taint sources (user input)
-    exists(source)
-  }
-
-  predicate isSink(DataFlow::Node sink) {
-    // Define dangerous sinks (SQL execution)
-    exists(sink)
-  }
-}
-
-module SqlInjectionFlow = TaintTracking::Global<SqlInjectionConfig>;
-
-from SqlInjectionFlow::PathNode source, SqlInjectionFlow::PathNode sink
-where SqlInjectionFlow::flowPath(source, sink)
-select sink.getNode(), source, sink, "SQL injection from $@.", source.getNode(), "user input"
-```
-
-### Query Metadata
-
-| Field | Description | Values |
-|-------|-------------|--------|
-| `@kind` | Query type | `problem`, `path-problem` |
-| `@problem.severity` | Issue severity | `error`, `warning`, `recommendation` |
-| `@security-severity` | CVSS score | `0.0` - `10.0` |
-| `@precision` | Confidence | `very-high`, `high`, `medium`, `low` |
-
-### Key Language Features
-
-```ql
-// Predicates
-predicate isUserInput(DataFlow::Node node) {
-  exists(Call c | c.getFunc().(Attribute).getName() = "get" and node.asExpr() = c)
-}
-
-// Transitive closure: + (one or more), * (zero or more)
-node.getASuccessor+()
-
-// Quantification
-exists(Variable v | v.getName() = "password")
-forall(Call c | c.getTarget().hasName("dangerous") | hasCheck(c))
-```
-
-## Creating Query Packs
-
-```bash
-codeql pack init myorg/security-queries
-```
-
-Structure:
-```
-myorg-security-queries/
-├── qlpack.yml
-├── src/
-│   └── SqlInjection.ql
-└── test/
-    └── SqlInjectionTest.expected
-```
-
-**qlpack.yml:**
-```yaml
-name: myorg/security-queries
-version: 1.0.0
-dependencies:
-  codeql/python-all: "*"
-```
-
-## CI/CD Integration (GitHub Actions)
-
-```yaml
-name: CodeQL Analysis
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  schedule:
-    - cron: '0 0 * * 1'  # Weekly
-
-jobs:
-  analyze:
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-
-    strategy:
-      matrix:
-        language: ['python', 'javascript']
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: ${{ matrix.language }}
-          queries: security-extended,security-and-quality
-          # Add custom queries/packs:
-          # queries: security-extended,./codeql/custom-queries
-          # packs: trailofbits/python-queries
-
-      - uses: github/codeql-action/autobuild@v3
-
-      - uses: github/codeql-action/analyze@v3
-        with:
-          category: "/language:${{ matrix.language }}"
-```
-
-## Testing Queries
-
-```bash
-codeql test run test/
-```
-
-Test file format:
-```python
-def vulnerable():
-    user_input = request.args.get("q")  # Source
-    cursor.execute("SELECT * FROM users WHERE id = " + user_input)  # Alert: sql-injection
-
-def safe():
-    user_input = request.args.get("q")
-    cursor.execute("SELECT * FROM users WHERE id = ?", (user_input,))  # OK
-```
-
-## Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| Database creation fails | Clean build environment, verify build command works independently |
-| Slow analysis | Use `--threads`, narrow query scope, check query complexity |
-| Missing results | Check file exclusions, verify source files were parsed |
-| Out of memory | Set `CODEQL_RAM=48000` environment variable (48GB) |
-| CMake source path issues | Adjust `--source-root` to point to actual source location |
+- **Writing custom queries** - Use a dedicated query development skill
+- **CI/CD integration** - Use GitHub Actions documentation directly
+- **Quick pattern searches** - Use Semgrep or grep for speed
+- **No build capability** for compiled languages - Consider Semgrep instead
+- **Single-file or lightweight analysis** - Semgrep is faster for simple pattern matching
 
 ## Rationalizations to Reject
 
-| Shortcut | Why It's Wrong |
-|----------|----------------|
-| "No findings means the code is secure" | CodeQL only finds patterns it has queries for; novel vulnerabilities won't be detected |
-| "This code path looks safe" | Complex data flow can hide vulnerabilities across 5+ function calls; trace the full path |
-| "Small change, low risk" | Small changes can introduce critical bugs; run full analysis on every change |
-| "Tests pass so it's safe" | Tests prove behavior, not absence of vulnerabilities; they test expected paths, not attacker paths |
-| "The query didn't flag it" | Default query suites don't cover everything; check if custom queries are needed for your domain |
+These shortcuts lead to missed findings. Do not accept them:
 
-## Resources
+- **"security-extended is enough"** - It is the baseline. Always check if Trail of Bits packs and Community Packs are available for the language. They catch categories `security-extended` misses entirely.
+- **"The database built, so it's good"** - A database that builds does not mean it extracted well. Always run Step 4 (quality assessment) and check file counts against expected source files. A cached build produces zero useful extraction.
+- **"Data extensions aren't needed for standard frameworks"** - Even Django/Spring apps have custom wrappers around ORM calls, request parsing, or shell execution that CodeQL does not model. Skipping the extensions workflow means missing vulnerabilities in project-specific code.
+- **"build-mode=none is fine for compiled languages"** - It produces severely incomplete analysis. No interprocedural data flow through compiled code is traced. Only use as an absolute last resort and clearly flag the limitation.
+- **"No findings means the code is secure"** - Zero findings can indicate poor database quality, missing models, or wrong query packs. Investigate before reporting clean results.
+- **"I'll just run the default suite"** - The default suite varies by how CodeQL is invoked. Always explicitly specify the suite (e.g., `security-extended`) so results are reproducible.
 
-- Docs: https://codeql.github.com/docs/
-- Query Help: https://codeql.github.com/codeql-query-help/
-- Security Lab: https://securitylab.github.com/
-- Trail of Bits Queries: https://github.com/trailofbits/codeql-queries
-- VSCode Extension: "CodeQL" for query development
+---
+
+## Workflow Selection
+
+This skill has three workflows:
+
+| Workflow | Purpose |
+|----------|---------|
+| [build-database](workflows/build-database.md) | Create CodeQL database using 3 build methods in sequence |
+| [create-data-extensions](workflows/create-data-extensions.md) | Detect or generate data extension models for project APIs |
+| [run-analysis](workflows/run-analysis.md) | Select rulesets, execute queries, process results |
+
+
+### Auto-Detection Logic
+
+**If user explicitly specifies** what to do (e.g., "build a database", "run analysis"), execute that workflow.
+
+**Default pipeline for "test", "scan", "analyze", or similar:** Execute all three workflows sequentially: build → extensions → analysis. The create-data-extensions step is critical for finding vulnerabilities in projects with custom frameworks or annotations that CodeQL doesn't model by default.
+
+```bash
+# Check if database exists
+DB=$(ls -dt codeql_*.db 2>/dev/null | head -1)
+if [ -n "$DB" ] && codeql resolve database -- "$DB" >/dev/null 2>&1; then
+  echo "DATABASE EXISTS ($DB) - can run analysis"
+else
+  echo "NO DATABASE - need to build first"
+fi
+```
+
+| Condition | Action |
+|-----------|--------|
+| No database exists | Execute build → extensions → analysis (full pipeline) |
+| Database exists, no extensions | Execute extensions → analysis |
+| Database exists, extensions exist | Ask user: run analysis on existing DB, or rebuild? |
+| User says "just run analysis" or "skip extensions" | Run analysis only |
+
+
+### Decision Prompt
+
+If unclear, ask user:
+
+```
+I can help with CodeQL analysis. What would you like to do?
+
+1. **Full scan (Recommended)** - Build database, create extensions, then run analysis
+2. **Build database** - Create a new CodeQL database from this codebase
+3. **Create data extensions** - Generate custom source/sink models for project APIs
+4. **Run analysis** - Run security queries on existing database
+
+[If database exists: "I found an existing database at <DB_NAME>"]
+```
